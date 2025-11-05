@@ -77,7 +77,7 @@ type LoginResponse struct {
 }
 
 type GetUserRequest struct {
-	ID string `path:"id" required:"true"`
+	ID string `param:"id" required:"true"`
 }
 
 type User struct {
@@ -194,4 +194,4 @@ We welcome contributions! Please open issues and PRs at the main [oaswrap/spec](
 
 ## License
 
-[MIT License](LICENSE) — Created with ❤️ by [Ahmad Faiz](https://github.com/akfaiz).
+[MIT](../../LICENSE)

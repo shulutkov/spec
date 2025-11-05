@@ -2,6 +2,7 @@ package spec
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/oaswrap/spec/internal/debuglog"
@@ -15,9 +16,10 @@ import (
 var _ operationContext = (*operationContextImpl)(nil)
 
 type operationContextImpl struct {
-	op     openapi.OperationContext
-	cfg    *option.OperationConfig
-	logger *debuglog.Logger
+	op                  openapi.OperationContext
+	cfg                 *option.OperationConfig
+	logger              *debuglog.Logger
+	parameterTagMapping map[specopenapi.ParameterIn]string
 }
 
 func (oc *operationContextImpl) With(opts ...option.OperationOption) operationContext {
@@ -70,7 +72,7 @@ func (oc *operationContextImpl) build() openapi.OperationContext {
 
 	for _, req := range cfg.Requests {
 		opts, value := oc.buildRequestOpts(req)
-		oc.op.AddReqStructure(req.Structure, opts...)
+		oc.op.AddReqStructure(oc.modifyReqStructure(req.Structure), opts...)
 		logger.LogOp(method, path, "add request", value)
 	}
 
@@ -163,4 +165,88 @@ func (oc *operationContextImpl) buildResponseOpts(resp *specopenapi.ContentUnit)
 		log += fmt.Sprintf(" (Content-Type: %s)", resp.ContentType)
 	}
 	return opts, log
+}
+
+func (oc *operationContextImpl) modifyReqStructure(structure any) any {
+	if len(oc.parameterTagMapping) == 0 {
+		return structure
+	}
+
+	t := reflect.TypeOf(structure)
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+
+	// Only structs are supported for parameter tag modification
+	if t.Kind() != reflect.Struct {
+		return structure
+	}
+
+	fields, modified := oc.buildModifiedFields(t)
+	if !modified {
+		return structure
+	}
+
+	// Create new struct type with modified fields
+	newType := reflect.StructOf(fields)
+	return reflect.New(newType).Interface()
+}
+
+// buildModifiedFields processes struct fields and applies parameter tag mappings.
+func (oc *operationContextImpl) buildModifiedFields(t reflect.Type) ([]reflect.StructField, bool) {
+	fields := make([]reflect.StructField, 0, t.NumField())
+	modified := false
+
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		originalField := field
+
+		// Apply parameter tag mappings
+		for paramIn, sourceTag := range oc.parameterTagMapping {
+			if oc.shouldApplyMapping(field, sourceTag, string(paramIn)) {
+				field.Tag = oc.buildNewTag(field.Tag, sourceTag, string(paramIn))
+				modified = true
+			}
+		}
+
+		fields = append(fields, field)
+
+		// Log if field was modified (for debugging)
+		if field.Tag != originalField.Tag {
+			oc.logger.LogAction("modified field tag",
+				fmt.Sprintf("field=%s, original=%q, new=%q",
+					field.Name, originalField.Tag, field.Tag))
+		}
+	}
+
+	return fields, modified
+}
+
+// shouldApplyMapping determines if a parameter tag mapping should be applied to a field.
+func (oc *operationContextImpl) shouldApplyMapping(field reflect.StructField, sourceTag, targetTag string) bool {
+	// Only apply if source tag exists and target tag doesn't exist
+	return field.Tag.Get(sourceTag) != "" && field.Tag.Get(targetTag) == ""
+}
+
+// buildNewTag constructs a new struct tag by adding the mapped parameter tag.
+func (oc *operationContextImpl) buildNewTag(
+	originalTag reflect.StructTag,
+	sourceTag, targetTag string,
+) reflect.StructTag {
+	sourceValue := originalTag.Get(sourceTag)
+	if sourceValue == "" {
+		return originalTag
+	}
+
+	// Parse existing tag string and add new tag
+	tagStr := string(originalTag)
+	if tagStr != "" && !strings.HasSuffix(tagStr, " ") {
+		tagStr += " "
+	}
+
+	// Escape quotes in the tag value
+	escapedValue := strings.ReplaceAll(sourceValue, `"`, `\"`)
+	newTag := fmt.Sprintf(`%s%s:"%s"`, tagStr, targetTag, escapedValue)
+
+	return reflect.StructTag(newTag)
 }

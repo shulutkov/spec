@@ -607,6 +607,25 @@ func TestRouter(t *testing.T) {
 			},
 		},
 		{
+			name:   "Duplicate Status Code Responses",
+			golden: "duplicate_status_code_responses",
+			setup: func(r spec.Router) {
+				type SuccessA struct {
+					Message string `json:"message"`
+				}
+				type SuccessB struct {
+					Count int `json:"count"`
+				}
+				r.Get("/mixed",
+					option.OperationID("getMixed"),
+					option.Summary("Get Mixed Responses"),
+					option.Description("Returns one of two possible response shapes."),
+					option.Response(200, new(SuccessA)),
+					option.Response(200, new(SuccessB)),
+				)
+			},
+		},
+		{
 			name:   "Server Variables",
 			golden: "server_variables",
 			opts: []option.OpenAPIOption{

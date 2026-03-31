@@ -8,6 +8,7 @@ import (
 	"github.com/oaswrap/spec/internal/debuglog"
 	specopenapi "github.com/oaswrap/spec/openapi"
 	"github.com/oaswrap/spec/option"
+	"github.com/swaggest/jsonschema-go"
 	"github.com/swaggest/openapi-go"
 	"github.com/swaggest/openapi-go/openapi3"
 	"github.com/swaggest/openapi-go/openapi31"
@@ -76,13 +77,67 @@ func (oc *operationContextImpl) build() openapi.OperationContext {
 		logger.LogOp(method, path, "add request", value)
 	}
 
-	for _, resp := range cfg.Responses {
+	for _, resp := range mergeResponses(cfg.Responses) {
 		opts, value := oc.buildResponseOpts(resp)
 		oc.op.AddRespStructure(resp.Structure, opts...)
 		logger.LogOp(method, path, "add response", value)
 	}
 
 	return oc.op
+}
+
+// responseKey identifies a unique response slot by HTTP status and content type.
+type responseKey struct {
+	httpStatus  int
+	contentType string
+}
+
+// mergeResponses groups responses by (HTTPStatus, ContentType) and combines
+// duplicates into a single response using jsonschema.OneOf.
+func mergeResponses(responses []*specopenapi.ContentUnit) []*specopenapi.ContentUnit {
+	if len(responses) <= 1 {
+		return responses
+	}
+
+	type group struct {
+		key   responseKey
+		items []*specopenapi.ContentUnit
+	}
+
+	var order []responseKey
+	groups := make(map[responseKey]*group)
+
+	for _, resp := range responses {
+		k := responseKey{httpStatus: resp.HTTPStatus, contentType: resp.ContentType}
+		g, exists := groups[k]
+		if !exists {
+			g = &group{key: k}
+			groups[k] = g
+			order = append(order, k)
+		}
+		g.items = append(g.items, resp)
+	}
+
+	result := make([]*specopenapi.ContentUnit, 0, len(order))
+	for _, k := range order {
+		g := groups[k]
+		if len(g.items) == 1 {
+			result = append(result, g.items[0])
+			continue
+		}
+
+		// Merge multiple structures into oneOf.
+		structures := make([]interface{}, 0, len(g.items))
+		for _, item := range g.items {
+			structures = append(structures, item.Structure)
+		}
+
+		merged := *g.items[0] // copy first entry for description, status, etc.
+		merged.Structure = jsonschema.OneOf(structures...)
+		result = append(result, &merged)
+	}
+
+	return result
 }
 
 func stringMapToEncodingMap3(enc map[string]string) map[string]openapi3.Encoding {

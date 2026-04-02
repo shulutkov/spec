@@ -1,4 +1,4 @@
-go 1.23.0
+go 1.25.0
 
 use (
 	.
@@ -6,6 +6,8 @@ use (
 	./adapter/chiopenapi/examples/basic
 	./adapter/echoopenapi
 	./adapter/echoopenapi/examples/basic
+	./adapter/echov5openapi
+	./adapter/echov5openapi/examples/basic
 	./adapter/fiberopenapi
 	./adapter/fiberopenapi/examples/basic
 	./adapter/ginopenapi

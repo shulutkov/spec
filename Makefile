@@ -5,7 +5,7 @@
 PKG           := ./...
 COVERAGE_DIR  := coverage
 COVERAGE_FILE := coverage.out
-ADAPTERS      := chiopenapi echoopenapi fiberopenapi ginopenapi httpopenapi muxopenapi httprouteropenapi
+ADAPTERS      := chiopenapi echoopenapi fiberopenapi ginopenapi httpopenapi muxopenapi httprouteropenapi echov5openapi
 
 # Platform detection for sed compatibility
 # Using an immediately expanded variable for this is good practice.
@@ -27,12 +27,20 @@ NC     := \033[0m # No Color
 GOLANGCI_LINT_VERSION := v2.3.1
 GOTESTSUM_VERSION     := v1.12.3
 
+# Normalize VERSION input so targets accept both 1.2.3 and v1.2.3.
+# Pre-release versions are also supported, e.g. 0.4.0-rc.1 or v0.4.0-rc.1.
+VERSION_STRIPPED := $(patsubst v%,%,$(VERSION))
+VERSION_TAG      := v$(VERSION_STRIPPED)
+
 # Ensure all targets are marked as phony to avoid conflicts with filenames.
 .PHONY: test test-adapter test-update testcov testcov-html
 .PHONY: tidy sync lint check tidy-all
 .PHONY: install-tools
 .PHONY: list-adapters adapter-status
 .PHONY: sync-adapter-deps
+.PHONY: release-preflight release-core-publish
+.PHONY: release-adapters-preflight release-adapters-publish release-adapters-publish-dry-run
+.PHONY: release-prepare release-publish release-dry-run
 .PHONY: help
 
 help: ## Show this help message
@@ -137,37 +145,127 @@ list-adapters: ## List available adapters
 		fi; \
 	done
 
-release: ## Release core module with the specified version
-	@if [ -z "$(VERSION)" ]; then \
-		echo "$(RED)Usage: make release VERSION=0.3.0$(NC)"; \
-		exit 1; \
-	fi
-	@echo "$(BLUE)🚀 Releasing version v$(VERSION)...$(NC)"
-	@git tag -a v$(VERSION) -m "Release v$(VERSION)"
-	@git push origin v$(VERSION)
+release-core-publish: ## Internal: release core module tag
+	@$(MAKE) release-preflight VERSION=$(VERSION_TAG)
+	@echo "$(BLUE)🚀 Releasing version $(VERSION_TAG)...$(NC)"
+	@git tag -a $(VERSION_TAG) -m "Release $(VERSION_TAG)"
+	@git push origin $(VERSION_TAG)
 
-release-adapters: ## Release all adapters with the specified version
+release-preflight: ## Validate release prerequisites for core tag
 	@if [ -z "$(VERSION)" ]; then \
-		echo "$(RED)Usage: make release-adapters VERSION=0.3.0$(NC)"; \
+		echo "$(RED)Usage: make release-prepare VERSION=0.3.0 (or v0.3.0)$(NC)"; \
 		exit 1; \
 	fi
-	@echo "$(BLUE)🚀 Releasing adapters with version v$(VERSION)...$(NC)"
+	@if [ -n "$$(git status --porcelain)" ]; then \
+		echo "$(RED)❌ Working tree is not clean. Commit or stash changes first.$(NC)"; \
+		exit 1; \
+	fi
+	@if git rev-parse -q --verify "refs/tags/$(VERSION_TAG)" >/dev/null; then \
+		echo "$(RED)❌ Local tag $(VERSION_TAG) already exists.$(NC)"; \
+		exit 1; \
+	fi
+	@if git ls-remote --exit-code --tags origin "refs/tags/$(VERSION_TAG)" >/dev/null 2>&1; then \
+		echo "$(RED)❌ Remote tag $(VERSION_TAG) already exists on origin.$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)✅ Core release preflight passed for $(VERSION_TAG)$(NC)"
+
+release-adapters-publish: ## Internal: release adapter module tags
+	@$(MAKE) release-adapters-preflight VERSION=$(VERSION_TAG)
+	@echo "$(BLUE)🚀 Releasing adapters with version $(VERSION_TAG)...$(NC)"
+	@tags=""; \
+	for a in $(ADAPTERS); do \
+		tag="adapter/$$a/$(VERSION_TAG)"; \
+		echo "$(BLUE)🏷️  Creating local tag $$tag...$(NC)"; \
+		git tag -a "$$tag" -m "Release $$tag"; \
+		tags="$$tags $$tag"; \
+	done; \
+	echo "$(BLUE)🚀 Pushing adapter tags to origin...$(NC)"; \
+	git push origin $$tags
+	@echo "$(GREEN)🎉 All adapters released with version $(VERSION_TAG)!$(NC)"
+
+release-adapters-preflight: ## Validate release prerequisites for adapter tags
+	@if [ -z "$(VERSION)" ]; then \
+		echo "$(RED)Usage: make release-publish VERSION=0.3.0 (or v0.3.0)$(NC)"; \
+		exit 1; \
+	fi
+	@if [ -n "$$(git status --porcelain)" ]; then \
+		echo "$(RED)❌ Working tree is not clean. Commit or stash changes first.$(NC)"; \
+		exit 1; \
+	fi
 	@for a in $(ADAPTERS); do \
-		echo "$(BLUE)🚀 Releasing adapter $$a...$(NC)"; \
-		(cd "adapter/$$a" && git tag -a adapter/$$a/v$(VERSION) -m "Release adapter/$$a/v$(VERSION)" && git push origin adapter/$$a/v$(VERSION)); \
+		tag="adapter/$$a/$(VERSION_TAG)"; \
+		if ! grep -Eq 'github.com/oaswrap/spec[[:space:]]+$(VERSION_TAG)($$|[[:space:]])' "adapter/$$a/go.mod"; then \
+			echo "$(RED)❌ adapter/$$a/go.mod is not pinned to $(VERSION_TAG). Run make sync-adapter-deps VERSION=$(VERSION_TAG).$(NC)"; \
+			exit 1; \
+		fi; \
+		if git rev-parse -q --verify "refs/tags/$$tag" >/dev/null; then \
+			echo "$(RED)❌ Local tag $$tag already exists.$(NC)"; \
+			exit 1; \
+		fi; \
+		if git ls-remote --exit-code --tags origin "refs/tags/$$tag" >/dev/null 2>&1; then \
+			echo "$(RED)❌ Remote tag $$tag already exists on origin.$(NC)"; \
+			exit 1; \
+		fi; \
 	done
-	@echo "$(GREEN)🎉 All adapters released with version v$(VERSION)!$(NC)"
+	@echo "$(GREEN)✅ Adapter release preflight passed for $(VERSION_TAG)$(NC)"
 
-release-adapters-dry-run:
-	@echo "$(YELLOW)🔍 Dry run for releasing adapters with version v$(VERSION)...$(NC)"
+release-adapters-publish-dry-run:
 	@if [ -z "$(VERSION)" ]; then \
-		echo "$(RED)Usage: make release-adapters-dry-run VERSION=0.3.0$(NC)"; \
+		echo "$(RED)Usage: make release-dry-run VERSION=0.3.0 (or v0.3.0)$(NC)"; \
 		exit 1; \
 	fi
+	@echo "$(YELLOW)🔍 Dry run for releasing adapters with version $(VERSION_TAG)...$(NC)"
 	@for a in $(ADAPTERS); do \
-		echo "$(BLUE)🚀 Would release adapter $$a with version adapter/$$a/v$(VERSION)$(NC)"; \
+		tag="adapter/$$a/$(VERSION_TAG)"; \
+		status="ok"; \
+		if git rev-parse -q --verify "refs/tags/$$tag" >/dev/null; then status="local-tag-exists"; fi; \
+		if git ls-remote --exit-code --tags origin "refs/tags/$$tag" >/dev/null 2>&1; then status="remote-tag-exists"; fi; \
+		echo "$(BLUE)🚀 Would release adapter $$a with version $$tag (status: $$status)$(NC)"; \
 	done
 	@echo "$(GREEN)🎉 Dry run complete! No changes made.$(NC)"
+
+release-prepare: ## Stage 1 release flow: root release + adapter dependency sync
+	@if [ -z "$(VERSION)" ]; then \
+		echo "$(RED)Usage: make release-prepare VERSION=0.3.0 (or v0.3.0)$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(BLUE)📦 Stage 1/2: Preparing monorepo release for $(VERSION_TAG)...$(NC)"
+	@$(MAKE) release-core-publish VERSION=$(VERSION_TAG)
+	@$(MAKE) sync-adapter-deps VERSION=$(VERSION_TAG)
+	@echo "$(YELLOW)⚠️  Commit and push adapter dependency changes before publishing adapter tags.$(NC)"
+	@echo "$(YELLOW)   Suggested commit: chore: sync adapter deps to $(VERSION_TAG)$(NC)"
+	@echo "$(GREEN)✅ Stage 1 complete. Next: make release-publish VERSION=$(VERSION_TAG)$(NC)"
+
+release-publish: ## Stage 2 release flow: publish adapter tags from committed sync state
+	@if [ -z "$(VERSION)" ]; then \
+		echo "$(RED)Usage: make release-publish VERSION=0.3.0 (or v0.3.0)$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(BLUE)📦 Stage 2/2: Publishing adapter tags for $(VERSION_TAG)...$(NC)"
+	@$(MAKE) release-adapters-publish VERSION=$(VERSION_TAG)
+	@echo "$(GREEN)🎉 Monorepo release completed for $(VERSION_TAG)!$(NC)"
+
+release-dry-run: ## Dry run for two-stage monorepo release
+	@if [ -z "$(VERSION)" ]; then \
+		echo "$(RED)Usage: make release-dry-run VERSION=0.3.0 (or v0.3.0)$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(YELLOW)🔍 Dry run for monorepo release $(VERSION_TAG)...$(NC)"
+	@echo "$(BLUE)Stage 1/2 would create and push core tag: $(VERSION_TAG)$(NC)"
+	@if git rev-parse -q --verify "refs/tags/$(VERSION_TAG)" >/dev/null; then \
+		echo "$(YELLOW)   Local status: tag already exists$(NC)"; \
+	else \
+		echo "$(GREEN)   Local status: tag available$(NC)"; \
+	fi
+	@if git ls-remote --exit-code --tags origin "refs/tags/$(VERSION_TAG)" >/dev/null 2>&1; then \
+		echo "$(YELLOW)   Remote status: tag already exists$(NC)"; \
+	else \
+		echo "$(GREEN)   Remote status: tag available$(NC)"; \
+	fi
+	@echo "$(BLUE)Stage 1/2 would sync adapter go.mod dependencies to $(VERSION_TAG)$(NC)"
+	@$(MAKE) release-adapters-publish-dry-run VERSION=$(VERSION_TAG)
+	@echo "$(YELLOW)ℹ️  Release process note: commit synced adapter dependencies before Stage 2 publishing.$(NC)"
 
 delete-tag: ## Delete a Git tag
 ifndef TAG
@@ -180,22 +278,22 @@ endif
 
 sync-adapter-deps: ## Sync adapter dependencies
 	@if [ -z "$(VERSION)" ]; then \
-		echo "$(RED)Usage: make sync-adapter-deps VERSION=v0.3.0 [NO_TIDY=1]$(NC)"; \
+		echo "$(RED)Usage: make sync-adapter-deps VERSION=0.3.0 (or v0.3.0) [NO_TIDY=1]$(NC)"; \
 		exit 1; \
 	fi
-	@echo "$(BLUE)🔄 Syncing adapter dependencies to $(VERSION)...$(NC)"
+	@echo "$(BLUE)🔄 Syncing adapter dependencies to $(VERSION_TAG)...$(NC)"
 	@for a in $(ADAPTERS); do \
 		echo "$(BLUE)📝 Updating adapter/$$a...$(NC)"; \
 		(cd "adapter/$$a" && \
-		$(SED_INPLACE) -E 's#(github.com/oaswrap/spec )v[0-9]+\.[0-9]+\.[^ ]*#\1$(VERSION)#' go.mod); \
+		$(SED_INPLACE) -E 's#(github.com/oaswrap/spec )v[0-9]+\.[0-9]+\.[^ ]*#\1$(VERSION_TAG)#' go.mod); \
 		if [ "$(NO_TIDY)" != "1" ]; then \
 			(cd "adapter/$$a" && go mod tidy); \
 		else \
 			echo "$(YELLOW)⚠️  Skipped go mod tidy for adapter/$$a because NO_TIDY=1$(NC)"; \
 		fi; \
-		echo "$(GREEN)✅ Updated adapter/$$a to $(VERSION)$(NC)"; \
+		echo "$(GREEN)✅ Updated adapter/$$a to $(VERSION_TAG)$(NC)"; \
 	done
-	@echo "$(GREEN)🎉 All adapters synced to $(VERSION)!$(NC)"
+	@echo "$(GREEN)🎉 All adapters synced to $(VERSION_TAG)!$(NC)"
 
 .PHONY: clean-replaces
 clean-replaces: ## Clean up replace directives in go.mod adapters

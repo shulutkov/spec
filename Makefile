@@ -160,6 +160,14 @@ release-preflight: ## Validate release prerequisites for core tag
 		echo "$(RED)❌ Working tree is not clean. Commit or stash changes first.$(NC)"; \
 		exit 1; \
 	fi
+	@if ! git rev-parse --abbrev-ref --symbolic-full-name @{u} >/dev/null 2>&1; then \
+		echo "$(RED)❌ No upstream branch configured. Push your branch and set upstream first.$(NC)"; \
+		exit 1; \
+	fi
+	@if [ "$$(git rev-list --count @{u}..HEAD)" -ne 0 ]; then \
+		echo "$(RED)❌ You have unpushed commits. Push them before running release-prepare.$(NC)"; \
+		exit 1; \
+	fi
 	@if git rev-parse -q --verify "refs/tags/$(VERSION_TAG)" >/dev/null; then \
 		echo "$(RED)❌ Local tag $(VERSION_TAG) already exists.$(NC)"; \
 		exit 1; \
@@ -191,6 +199,14 @@ release-adapters-preflight: ## Validate release prerequisites for adapter tags
 	fi
 	@if [ -n "$$(git status --porcelain)" ]; then \
 		echo "$(RED)❌ Working tree is not clean. Commit or stash changes first.$(NC)"; \
+		exit 1; \
+	fi
+	@if ! git rev-parse --abbrev-ref --symbolic-full-name @{u} >/dev/null 2>&1; then \
+		echo "$(RED)❌ No upstream branch configured. Push your branch and set upstream first.$(NC)"; \
+		exit 1; \
+	fi
+	@if [ "$$(git rev-list --count @{u}..HEAD)" -ne 0 ]; then \
+		echo "$(RED)❌ You have unpushed commits. Push them before running release-publish.$(NC)"; \
 		exit 1; \
 	fi
 	@for a in $(ADAPTERS); do \

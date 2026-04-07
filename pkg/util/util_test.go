@@ -131,6 +131,26 @@ func TestJoinURL(t *testing.T) {
 			segments: []string{"api", "v1"},
 			expected: "/api/v1",
 		},
+		{
+			name:     "trailing slash",
+			segments: []string{"api", "v1", "/"},
+			expected: "/api/v1/",
+		},
+		{
+			name:     "trailing slashes",
+			segments: []string{"api", "v1", "///"},
+			expected: "/api/v1/",
+		},
+		{
+			name:     "trailing slash in the last part of the path",
+			segments: []string{"api", "v1/"},
+			expected: "/api/v1/",
+		},
+		{
+			name:     "trailing slashes in the last part of the path",
+			segments: []string{"api", "v1///"},
+			expected: "/api/v1/",
+		},
 	}
 
 	for _, tt := range tests {

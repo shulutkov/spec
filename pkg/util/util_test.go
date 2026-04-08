@@ -126,6 +126,10 @@ func TestJoinURL(t *testing.T) {
 			expected: "/api/v1",
 		},
 		{
+			name:     "empty",
+			expected: "",
+		},
+		{
 			name:     "base with only slashes",
 			base:     "///",
 			segments: []string{"api", "v1"},
@@ -158,5 +162,13 @@ func TestJoinURL(t *testing.T) {
 			result := util.JoinURL(tt.base, tt.segments...)
 			assert.Equal(t, tt.expected, result)
 		})
+	}
+}
+
+func TestJoinPath_EmptyInput(t *testing.T) {
+	got := util.JoinPath()
+	want := ""
+	if got != want {
+		t.Errorf("JoinPath() = %q, want %q", got, want)
 	}
 }
